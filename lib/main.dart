@@ -238,74 +238,6 @@ class _MyHomeState extends State<MyHome> {
     );
   }
 
-  Container _footerWidget() {
-    return Container(
-      width: 202,
-      height: 81.5,
-      decoration: BoxDecoration(
-        color: Color(0xff2C2C2C),
-        borderRadius: BorderRadius.circular(20),
-      ),
-
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-
-        children: [
-
-          SizedBox(
-            height: 51.5,
-            width: 80.5,
-            child: ElevatedButton(
-
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-
-              child: SvgPicture.asset(
-                'assets/icons/history.svg',
-                width: 30,
-                height: 30,
-                ),
-
-              onPressed: () {
-
-              },
-            ),
-          ),
-
-          SizedBox(width: 12,),
-
-          SizedBox(
-            height: 51.5,
-            width: 80.5,
-            child: ElevatedButton(
-
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-
-              child: SvgPicture.asset(
-                'assets/icons/cog.svg',
-                width: 40,
-                height: 40,
-                ),
-
-              onPressed: () {
-
-              },
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
   Container _tasksWidget() {
     return Container(
       width: 340,
@@ -448,7 +380,7 @@ class _MyHomeState extends State<MyHome> {
                                 ),
                               ),
                               
-                              Container(
+                              SizedBox(
                                 width: 30,
                                 height: 30,
                                 child: SvgPicture.asset(
@@ -1131,7 +1063,7 @@ class _MyHomeState extends State<MyHome> {
                                                 });
                                               },
                                               
-                                              activeColor: Colors.white,
+                                              activeThumbColor: Colors.white,
                                               activeTrackColor: _breakColor,
                                               inactiveTrackColor: _pomoColor,
                                               inactiveThumbColor: Colors.white,
@@ -1194,12 +1126,13 @@ class _MyHomeState extends State<MyHome> {
       },
     );
 
-    final overlay = Overlay.of(context)!;
+    final overlay = Overlay.of(context);
     overlay.insert(entry);
 
   }
 
   void _closeConfigs() {
+    // ignore: unnecessary_null_comparison
     if (entry != null) {
       entry.remove();
     }
