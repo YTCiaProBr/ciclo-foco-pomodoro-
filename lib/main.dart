@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:pomodoro_timer/models/task_model.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
+late final SharedPreferences prefs;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +17,7 @@ void main() async {
     DeviceOrientation.portraitDown, // opcional (permite virar de cabeça pra baixo)
   ]);
 
+  prefs = await SharedPreferences.getInstance();
   runApp(const MyApp());
 }
 
@@ -40,7 +43,7 @@ class MyHome extends StatefulWidget {
 }
 
 class _MyHomeState extends State<MyHome> {
-  
+
   late OverlayEntry entry;
   
   late TaskModel _taskManager;
@@ -56,8 +59,22 @@ class _MyHomeState extends State<MyHome> {
 
   Timer? _pomoTimer;
 
-  int _pomoTime = 25;
-  int _breakTime = 5;
+  Map alarms = {
+    '1': 'audio/alarm.mp3',
+    '2': 'audio/bird.mp3',
+    '3': 'audio/error.mp3',
+    '4': 'audio/soft_synth.mp3',
+    '5': 'audio/wind_chime.mp3',
+  };
+
+  String _pomoAlarm = prefs.getString('_pomoAlarm') ?? '1';
+  String _breakAlarm = prefs.getString('_breakAlarm') ?? '4';
+  bool _playAlarmsOn = prefs.getBool('_playAlarmsOn') ?? true;
+
+  bool isPomo = true; 
+
+  int _pomoTime = prefs.getInt('_pomoTime')!;
+  int _breakTime = prefs.getInt('_breakTime')!;
   int _currentTime = 0;
   int _timer = 0;
 
@@ -101,6 +118,30 @@ class _MyHomeState extends State<MyHome> {
     _bgColor = _pomoColor;
     _setTimer(_pomoTime);
 
+  }
+
+  void _saveConfigs() {
+    prefs.setInt('_pomoTime', _pomoTime);
+    prefs.setInt('_breakTime', _breakTime);
+    prefs.setBool('_autoStartTimersOn', _autoStartTimersOn);
+    prefs.setBool('_playAlarmsOn', _playAlarmsOn);
+    prefs.setString('_pomoAlarm', _pomoAlarm);
+    prefs.setString('_breakAlarm', _breakAlarm);
+  }
+
+  void _loadConfigs() {
+    if (
+      !prefs.containsKey('_pomoTime')
+      ) {
+      return;
+    }
+
+    _pomoTime = prefs.getInt('_pomoTime') ?? 25;
+    _breakTime = prefs.getInt('_breakTime') ?? 5;
+    _autoStartTimersOn = prefs.getBool('_autoStartTimersOn') ?? false;
+    _playAlarmsOn = prefs.getBool('_playAlarmsOn') ?? true;
+    _pomoAlarm = prefs.getString('_pomoAlarm') ?? '1';
+    _breakAlarm = prefs.getString('_breakAlarm') ?? '4';
   }
 
   void _pauseTimer() {
@@ -168,19 +209,22 @@ class _MyHomeState extends State<MyHome> {
         } else {
           //Stops timer when time left finishes
           _stopTimer();
-          _playAudio('audio/end_pomodoro.wav');
           _startIcon = _playIcon;
 
           //Swaps pomodoro to break
-          if (_currentTime == _pomoTime) {
+          if (isPomo) {
             _bgColor = _breakColor;
             _setTimer(_breakTime);
+            isPomo = false;
+            if (_playAlarmsOn) _playAudio(alarms[_pomoAlarm]);
           } 
           
           //Swaps break to pomodoro
           else {
             _bgColor = _pomoColor;
             _setTimer(_pomoTime);
+            isPomo = true;
+            if (_playAlarmsOn) _playAudio(alarms[_breakAlarm]);
           }
 
           //Starts timer automatically
@@ -192,8 +236,10 @@ class _MyHomeState extends State<MyHome> {
 
   @override
   Widget build(BuildContext context) {  
+    _loadConfigs();
 
     return Scaffold(
+
       extendBodyBehindAppBar: true,
 
       appBar: appBar(),
@@ -478,6 +524,7 @@ class _MyHomeState extends State<MyHome> {
                         _stopTimer();
                         _startIcon = _playIcon;
                         _setTimer(_pomoTime);
+                        isPomo = true;
                         _bgColor = _pomoColor;
                       });
                     },
@@ -524,6 +571,7 @@ class _MyHomeState extends State<MyHome> {
                         _stopTimer();
                         _startIcon = _playIcon;
                         _setTimer(_breakTime);
+                        isPomo = false;
                         _bgColor = _breakColor;
                       });
                     },
@@ -753,6 +801,7 @@ class _MyHomeState extends State<MyHome> {
     );
 
     bool autoStartOn = _autoStartTimersOn;
+    bool playAlarmsOn = _playAlarmsOn;
 
     entry = OverlayEntry(
       builder: (context) {
@@ -825,7 +874,7 @@ class _MyHomeState extends State<MyHome> {
                           children: [
 
                             Container(
-                              height: 240,
+                              height: 250,
                               decoration: BoxDecoration(
                                 color: Colors.transparent,
                               ),
@@ -833,254 +882,512 @@ class _MyHomeState extends State<MyHome> {
                               child: Column(
                                 children: [
 
-                                  Text(
-                                    'Timers',
-                                    style: TextStyle(
-                                      color: Color(0xff2C2C2C),
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                Text(
+                                  'Timers',
+                                  style: TextStyle(
+                                    color: Color(0xff2C2C2C),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
                                   ),
-
-                                  SizedBox(height: 8,),
-
-                                  //Pomodoro TextField
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 16, right: 16),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        
-                                        Text(
-                                        'Pomodoro',
-                                        style: TextStyle(
-                                          color: Color(0xffACACAC),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                    
-                                        SizedBox(
-                                          width: 150,
-                                          height: 50,
-
-                                          child: TextField(
-                                            controller: pomoController,
-                                            onChanged: (value) {
-                                              int newPomoTime = int.parse(value);
-
-                                              //Clamps value between 1 and 999
-                                              if (newPomoTime > 999) {
-                                                newPomoTime = 999;   
-                                              } else if (newPomoTime < 1) {
-                                                newPomoTime = 1;
-                                              }
-
-                                              //Sets TextField's text to clampped number
-                                              pomoController.text = '$newPomoTime';
-                                              pomoController.selection = TextSelection.fromPosition(
-                                                TextPosition(offset: pomoController.text.length),
-                                              );
-
-                                              //Sets timer if timer not running
-                                              if (_currentTime == _pomoTime && _timerRunning == false) {
-                                                setState(() {
-                                                  _setTimer(newPomoTime);
-                                                });
-                                              }
-                                              _currentTime = newPomoTime;
-                                              _pomoTime = newPomoTime;
-                                              
-                                            },
-
-                                            keyboardType: TextInputType.number,
-                                            inputFormatters: [
-                                              FilteringTextInputFormatter.digitsOnly
-                                            ],
-
-                                            style: TextStyle(
-                                              color: Color(0xff2C2C2C),
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-
-                                            textAlign: TextAlign.center,
-                                            textAlignVertical: TextAlignVertical.center,
-                                            decoration: InputDecoration(
-                                              border: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              enabledBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              
-                                              contentPadding: EdgeInsets.all(0),
-                                              hintText: '25',
-                                              hintStyle: TextStyle(
-                                                color: Color(0xffACACAC),
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                              filled: true,
-                                              fillColor: Color(0xffE6E6E6),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  SizedBox(height: 20,),
-
-                                  //Break TextField
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 16, right: 16),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        
-                                        Text(
-                                        'Descanso',
-                                        style: TextStyle(
-                                          color: Color(0xffACACAC),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                    
-                                        SizedBox(
-                                          width: 150,
-                                          height: 50,
-
-                                          child: TextField(
-                                            controller: breakController,
-                                            onChanged: (value) {
-                                              int newBreakTime = int.parse(value);
-
-                                              //Clamps value between 1 and 999
-                                              if (newBreakTime > 999) {
-                                                newBreakTime = 999;   
-                                              } else if (newBreakTime < 1) {
-                                                newBreakTime = 1;
-                                              }
-
-                                              //Sets textfield's text to clampped number
-                                              breakController.text = '$newBreakTime';
-                                              breakController.selection = TextSelection.fromPosition(
-                                                TextPosition(offset: breakController.text.length),
-                                              );
-
-                                              //Changes InApp timer if it's selected and not running
-                                              if (_currentTime == _breakTime && _timerRunning == false) {
-                                                setState(() {
-                                                  _setTimer(newBreakTime);
-                                                });
-                                              }
-
-                                              _currentTime = newBreakTime;
-                                              _breakTime = newBreakTime;
-                                              
-                                            },
-
-                                            keyboardType: TextInputType.number,
-                                            inputFormatters: [
-                                              FilteringTextInputFormatter.digitsOnly
-                                            ],
-
-                                            style: TextStyle(
-                                              color: Color(0xff2C2C2C),
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-
-                                            textAlign: TextAlign.center,
-                                            textAlignVertical: TextAlignVertical.center,
-                                            decoration: InputDecoration(
-                                              border: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              enabledBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(20),
-                                                borderSide: BorderSide(color: Colors.transparent),
-                                              ),
-                                              
-                                              contentPadding: EdgeInsets.all(0),
-                                              hintText: 'Minutos...',
-                                              hintStyle: TextStyle(
-                                                color: Color(0xffACACAC),
-                                                fontSize: 20,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                              filled: true,
-                                              fillColor: Color(0xffE6E6E6),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                                ),
                                 
-                                  SizedBox(height: 20,),
-
-                                  //AutoStart Switch
-                                  StatefulBuilder(
-                                    builder: (context, setState) => Padding(
-
-                                      padding: const EdgeInsets.only(left: 16, right: 24),
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          
-                                          Text(
-                                          'Auto Início',
+                                SizedBox(height: 8,),
+                                
+                                //Pomodoro TextField
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 16, right: 16),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      
+                                      Text(
+                                      'Pomodoro',
+                                      style: TextStyle(
+                                        color: Color(0xffACACAC),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                  
+                                      SizedBox(
+                                        width: 150,
+                                        height: 50,
+                                
+                                        child: TextField(
+                                          controller: pomoController,
+                                          onChanged: (value) {
+                                            int newPomoTime = int.parse(value);
+                                
+                                            //Clamps value between 1 and 999
+                                            if (newPomoTime > 999) {
+                                              newPomoTime = 999;   
+                                            } else if (newPomoTime < 1) {
+                                              newPomoTime = 1;
+                                            }
+                                
+                                            //Sets TextField's text to clampped number
+                                            pomoController.text = '$newPomoTime';
+                                            pomoController.selection = TextSelection.fromPosition(
+                                              TextPosition(offset: pomoController.text.length),
+                                            );
+                                
+                                            //Sets timer if timer not running
+                                            if (isPomo && _timerRunning == false) {
+                                              setState(() {
+                                                _setTimer(newPomoTime);
+                                              });
+                                            }
+                                            _currentTime = newPomoTime;
+                                            _pomoTime = newPomoTime;
+                                            _saveConfigs();
+                                          },
+                                
+                                          keyboardType: TextInputType.number,
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter.digitsOnly
+                                          ],
+                                
                                           style: TextStyle(
-                                            color: Color(0xffACACAC),
+                                            color: Color(0xff2C2C2C),
                                             fontSize: 20,
                                             fontWeight: FontWeight.bold,
-                                            ),
                                           ),
-                                      
-                                          Transform.scale(
-                                            scale: 1.5,
-                                            child: Switch(
-                                              value: autoStartOn,
-                                                                                
-                                              onChanged: (value) {
-                                                setState(() {
-                                                  autoStartOn = value;
-                                                  _autoStartTimersOn = autoStartOn;
-                                                });
-                                              },
-                                              
-                                              activeThumbColor: Colors.white,
-                                              activeTrackColor: _breakColor,
-                                              inactiveTrackColor: _pomoColor,
-                                              inactiveThumbColor: Colors.white,
-                                            
-                                              trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                                
+                                          textAlign: TextAlign.center,
+                                          textAlignVertical: TextAlignVertical.center,
+                                          decoration: InputDecoration(
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
                                             ),
-                                          )
-                                        ],
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
+                                            ),
+                                            
+                                            contentPadding: EdgeInsets.all(0),
+                                            hintText: '25',
+                                            hintStyle: TextStyle(
+                                              color: Color(0xffACACAC),
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            filled: true,
+                                            fillColor: Color(0xffE6E6E6),
+                                          ),
+                                        ),
                                       ),
+                                    ],
+                                  ),
+                                ),
+                                
+                                SizedBox(height: 20,),
+                                
+                                //Break TextField
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 16, right: 16),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      
+                                      Text(
+                                      'Descanso',
+                                      style: TextStyle(
+                                        color: Color(0xffACACAC),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                  
+                                      SizedBox(
+                                        width: 150,
+                                        height: 50,
+                                
+                                        child: TextField(
+                                          controller: breakController,
+                                          onChanged: (value) {
+                                            int newBreakTime = int.parse(value);
+                                
+                                            //Clamps value between 1 and 999
+                                            if (newBreakTime > 999) {
+                                              newBreakTime = 999;   
+                                            } else if (newBreakTime < 1) {
+                                              newBreakTime = 1;
+                                            }
+                                
+                                            //Sets textfield's text to clampped number
+                                            breakController.text = '$newBreakTime';
+                                            breakController.selection = TextSelection.fromPosition(
+                                              TextPosition(offset: breakController.text.length),
+                                            );
+                                
+                                            //Changes InApp timer if it's selected and not running
+                                            if (!isPomo && _timerRunning == false) {
+                                              setState(() {
+                                                _setTimer(newBreakTime);
+                                              });
+                                            }
+                                
+                                            _currentTime = newBreakTime;
+                                            _breakTime = newBreakTime;
+                                            _saveConfigs();                                              
+                                          },
+                                
+                                          keyboardType: TextInputType.number,
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter.digitsOnly
+                                          ],
+                                
+                                          style: TextStyle(
+                                            color: Color(0xff2C2C2C),
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                
+                                          textAlign: TextAlign.center,
+                                          textAlignVertical: TextAlignVertical.center,
+                                          decoration: InputDecoration(
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(20),
+                                              borderSide: BorderSide(color: Colors.transparent),
+                                            ),
+                                            
+                                            contentPadding: EdgeInsets.all(0),
+                                            hintText: '5',
+                                            hintStyle: TextStyle(
+                                              color: Color(0xffACACAC),
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            filled: true,
+                                            fillColor: Color(0xffE6E6E6),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                                                
+                                SizedBox(height: 20,),
+                                
+                                //AutoStart Switch
+                                StatefulBuilder(
+                                  builder: (context, setState) => Padding(
+                                
+                                    padding: const EdgeInsets.only(left: 16, right: 24),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        
+                                        Text(
+                                        'Auto Início',
+                                        style: TextStyle(
+                                          color: Color(0xffACACAC),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                    
+                                        Transform.scale(
+                                          scale: 1.5,
+                                          child: Switch(
+                                            value: autoStartOn,
+                                                                              
+                                            onChanged: (value) {
+                                              setState(() {
+                                                autoStartOn = value;
+                                                _autoStartTimersOn = autoStartOn;
+                                                _saveConfigs();
+                                              });
+                                            },
+                                            
+                                            activeThumbColor: Colors.white,
+                                            activeTrackColor: _breakColor,
+                                            inactiveTrackColor: _pomoColor,
+                                            inactiveThumbColor: Colors.white,
+                                          
+                                            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                                          ),
+                                        )
+                                      ],
                                     ),
                                   ),
-                                ],
+                                ),
+                              ]
                               ),
                             ),
 
-                            
-                          ],
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16.0, right: 16.0),
+                              child: Divider(
+                                color: Color(0xffE6E6E6),
+                                thickness: 2.5,
+                              ),
+                            ),
+
+                            Container(
+                              height: 250,
+                              decoration: BoxDecoration(
+                                color: Colors.transparent,
+                              ),
+
+                              child: Column(
+                                children: [
+
+                                Text(
+                                  'Alarmes',
+                                  style: TextStyle(
+                                    color: Color(0xff2C2C2C),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                
+                                SizedBox(height: 8,),
+                                
+                                //AutoStart Switch
+                                StatefulBuilder(
+                                  builder: (context, setState) => Padding(
+                                
+                                    padding: const EdgeInsets.only(left: 16, right: 24),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        
+                                        Text(
+                                        'Tocar Alarmes',
+                                        style: TextStyle(
+                                          color: Color(0xffACACAC),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                    
+                                        Transform.scale(
+                                          scale: 1.5,
+                                          child: Switch(
+                                            value: playAlarmsOn,
+                                                                              
+                                            onChanged: (value) {
+                                              setState(() {
+                                                playAlarmsOn = value;
+                                                _playAlarmsOn = playAlarmsOn;
+                                                _saveConfigs();
+                                              });
+                                            },
+                                            
+                                            activeThumbColor: Colors.white,
+                                            activeTrackColor: _breakColor,
+                                            inactiveTrackColor: _pomoColor,
+                                            inactiveThumbColor: Colors.white,
+                                          
+                                            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                                          ),
+                                        )
+                                      ],
+                                    ),
+                                  ),
+                                ),
+
+                                SizedBox(height: 20,),
+
+                                //Pomodoro Dropdown
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 16, right: 16),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      
+                                      Text(
+                                      'Pomodoro',
+                                      style: TextStyle(
+                                        color: Color(0xffACACAC),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+
+                                      DropdownMenu(
+                                        width: 150,
+                                        initialSelection: _pomoAlarm,
+                                        
+                                        onSelected: (value) {
+
+                                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                                                _playAudio(alarms[value]);
+                                            });
+                                            _pomoAlarm = value ?? _pomoAlarm;
+                                            _saveConfigs();
+                                        }, 
+
+                                        menuHeight: 250,
+
+                                        trailingIcon: RotatedBox(
+                                          quarterTurns: 2,
+                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                          ),
+                                        
+                                        selectedTrailingIcon: RotatedBox(
+                                          quarterTurns: 0,
+                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                        ),
+
+                                        label: const Text(
+                                          'Som',
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.normal,
+                                            color: Color(0xff2C2C2C),
+                                          ),
+                                        ),
+                                      
+                                        textStyle: TextStyle(
+                                          color: Color(0xff2C2C2C),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      
+                                        inputDecorationTheme: InputDecorationTheme(
+                                          isDense: true,
+                                          contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
+                                          filled: true,
+                                          fillColor: Color(0xffE6E6E6),
+                                          
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(20),
+                                            borderSide: BorderSide.none,
+                                          )
+                                        ),
+                                      
+                                        menuStyle: MenuStyle(
+                                          elevation: WidgetStatePropertyAll(0.0),
+                                          backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
+                                          shape: WidgetStatePropertyAll(
+                                            RoundedRectangleBorder(
+                                              borderRadius: BorderRadiusGeometry.circular(20)
+                                            )
+                                          )
+                                        ),
+                                      
+                                        dropdownMenuEntries: const [
+                                          DropdownMenuEntry(value: '1', label: 'Alarm'),
+                                          DropdownMenuEntry(value: '2', label: 'Birds'),
+                                          DropdownMenuEntry(value: '3', label: 'Error'),
+                                          DropdownMenuEntry(value: '4', label: 'Soft Synth'),
+                                          DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                
+                                SizedBox(height: 20,),
+                                                                
+                                                                //Pomodoro Dropdown
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 16, right: 16),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      
+                                      Text(
+                                      'Descanso',
+                                      style: TextStyle(
+                                        color: Color(0xffACACAC),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                                                      
+                                      DropdownMenu(
+                                        width: 150,
+                                        initialSelection: _breakAlarm,
+                                        
+                                        onSelected: (value) {
+                                                                      
+                                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                                                _playAudio(alarms[value]);
+                                            });
+                                            _breakAlarm = value ?? _breakAlarm;
+                                            _saveConfigs();
+                                        }, 
+                                                                      
+                                        menuHeight: 250,
+                                      
+                                        trailingIcon: RotatedBox(
+                                          quarterTurns: 2,
+                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                          ),
+                                        
+                                        selectedTrailingIcon: RotatedBox(
+                                          quarterTurns: 0,
+                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                        ),
+
+                                        label: const Text(
+                                          'Som',
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.normal,
+                                            color: Color(0xff2C2C2C),
+                                          ),
+                                        ),
+                                      
+                                        textStyle: TextStyle(
+                                          color: Color(0xff2C2C2C),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      
+                                        inputDecorationTheme: InputDecorationTheme(
+                                          isDense: true,
+                                          contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
+                                          filled: true,
+                                          fillColor: Color(0xffE6E6E6),
+                                          
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(20),
+                                            borderSide: BorderSide.none,
+                                          )
+                                        ),
+                                      
+                                        menuStyle: MenuStyle(
+                                          elevation: WidgetStatePropertyAll(0.0),
+                                          backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
+                                          shape: WidgetStatePropertyAll(
+                                            RoundedRectangleBorder(
+                                              borderRadius: BorderRadiusGeometry.circular(20)
+                                            )
+                                          )
+                                        ),
+                                      
+                                        dropdownMenuEntries: const [
+                                          DropdownMenuEntry(value: '1', label: 'Alarm'),
+                                          DropdownMenuEntry(value: '2', label: 'Birds'),
+                                          DropdownMenuEntry(value: '3', label: 'Error'),
+                                          DropdownMenuEntry(value: '4', label: 'Soft Synth'),
+                                          DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
+                                        ],
+                                      ),
+                                      ],
+                                    ),
+                                ),
+                              ]
+                              ),
+                            )
+                          ]  
                         ),
                       ),
                     ),
