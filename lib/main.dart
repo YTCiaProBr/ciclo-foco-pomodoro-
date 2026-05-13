@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
@@ -7,8 +9,6 @@ import 'package:pomodoro_timer/models/task_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
-late final SharedPreferences prefs;
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -17,7 +17,6 @@ void main() async {
     DeviceOrientation.portraitDown, // opcional (permite virar de cabeça pra baixo)
   ]);
 
-  prefs = await SharedPreferences.getInstance();
   runApp(const MyApp());
 }
 
@@ -44,20 +43,38 @@ class MyHome extends StatefulWidget {
 
 class _MyHomeState extends State<MyHome> {
 
-  late OverlayEntry entry;
+  // ---------------------------------
+
+  late final SharedPreferences prefs;
+
+  late ConfigsOverlay _configsScreen;
+  bool _showConfigs = false;
+  //late newTaskScreen _newTaskScreen;
+  bool _showEditTask = false;
   
   late TaskModel _taskManager;
-  List<TaskModel> _tasksList = [];
+  TaskModel toEditTask = TaskModel.empty;
+  int toEditTaskIdx = -1;
+  bool toEdit = false;
 
-  String _formatedTime = '00:00';
+  
   String _startIcon = '';
   final String _playIcon = 'assets/icons/play.svg';
   final String _pauseIcon = 'assets/icons/pause.svg';
 
+  Timer? _pomoTimer;  
+
+  String _formatedTime = '00:00';
+  int _pomoTime = 25;
+  int _breakTime = 5;
+  int _currentTime = 0;
+  int _timer = 0;
+  double _timerProgress = 0;
+
+  bool isPomo = true; 
   bool _autoStartTimersOn = false;
   bool _timerRunning = false;
-
-  Timer? _pomoTimer;
+  bool _playAlarmsOn = true;
 
   Map alarms = {
     '1': 'audio/alarm.mp3',
@@ -67,24 +84,18 @@ class _MyHomeState extends State<MyHome> {
     '5': 'audio/wind_chime.mp3',
   };
 
-  String _pomoAlarm = prefs.getString('_pomoAlarm') ?? '1';
-  String _breakAlarm = prefs.getString('_breakAlarm') ?? '4';
-  bool _playAlarmsOn = prefs.getBool('_playAlarmsOn') ?? true;
-
-  bool isPomo = true; 
-
-  int _pomoTime = prefs.getInt('_pomoTime')!;
-  int _breakTime = prefs.getInt('_breakTime')!;
-  int _currentTime = 0;
-  int _timer = 0;
-
-  double _timerProgress = 0;
+  String _pomoAlarm = '1';
+  String _breakAlarm = '4';
 
   final Color _breakColor = Color.fromARGB(255, 55, 154, 247);
   final Color _pomoColor = Color(0xffF7374F);
   Color _bgColor = Color(0xffF7374F);
   
   AudioPlayer? _audioPlayer;
+
+  late dynamic _prefsFuture;
+
+  // ---------------------------------
 
   @override
   void initState() {
@@ -98,26 +109,19 @@ class _MyHomeState extends State<MyHome> {
       cyclesFinished: 0,
     );
 
-    TaskModel task1 = _taskManager.fromMap(
-      {
-        'title': 'Estudar',
-        'description': 'Páginas 20 à 25',
-        'cycles': 2,
-        'cyclesfinished': 0,
-      }
-    );
-
-    _taskManager.addTask(task1);
-
-    _tasksList = _taskManager.getTasks();
-
+    _configsScreen = ConfigsOverlay(home: this);
+    //_newTaskScreen = newTaskScreen(home: this);
     _audioPlayer = AudioPlayer();
     _startIcon = _playIcon;
-    _currentTime = _pomoTime;
-    _timer = _currentTime;
     _bgColor = _pomoColor;
-    _setTimer(_pomoTime);
+    _prefsFuture = _startPrefs();
+  }
 
+
+  Future<void> _startPrefs() async {
+    prefs = await SharedPreferences.getInstance();
+    await _loadConfigs();
+    await Future.delayed(const Duration(seconds: 5));
   }
 
   void _saveConfigs() {
@@ -127,9 +131,22 @@ class _MyHomeState extends State<MyHome> {
     prefs.setBool('_playAlarmsOn', _playAlarmsOn);
     prefs.setString('_pomoAlarm', _pomoAlarm);
     prefs.setString('_breakAlarm', _breakAlarm);
+
+
+    List<TaskModel> tasks = _taskManager.getTasks();
+    List<Map> mapTasks = [];
+
+    for (TaskModel task in tasks) {
+      mapTasks.add(_taskManager.toMap(task));
+    }
+
+    print(mapTasks);
+
+    prefs.setString('_tasks', jsonEncode(mapTasks));
   }
 
-  void _loadConfigs() {
+  Future<void> _loadConfigs() async {
+
     if (
       !prefs.containsKey('_pomoTime')
       ) {
@@ -142,6 +159,20 @@ class _MyHomeState extends State<MyHome> {
     _playAlarmsOn = prefs.getBool('_playAlarmsOn') ?? true;
     _pomoAlarm = prefs.getString('_pomoAlarm') ?? '1';
     _breakAlarm = prefs.getString('_breakAlarm') ?? '4';
+    
+
+    String? savedTasks = prefs.getString('_tasks');
+
+    if (savedTasks != null) {
+      List loadedTasks = jsonDecode(savedTasks);
+      _taskManager.setTasks(loadedTasks);
+    }
+
+    //Initializes the timers
+    _currentTime = _pomoTime;
+    _timer = _currentTime;
+    _setTimer(_pomoTime);
+
   }
 
   void _pauseTimer() {
@@ -210,9 +241,11 @@ class _MyHomeState extends State<MyHome> {
           //Stops timer when time left finishes
           _stopTimer();
           _startIcon = _playIcon;
-
+          
           //Swaps pomodoro to break
           if (isPomo) {
+            _taskManager.propagateAddCycle();
+            _saveConfigs();
             _bgColor = _breakColor;
             _setTimer(_breakTime);
             isPomo = false;
@@ -236,52 +269,121 @@ class _MyHomeState extends State<MyHome> {
 
   @override
   Widget build(BuildContext context) {  
-    _loadConfigs();
 
-    return Scaffold(
+    return FutureBuilder(
+      future: _prefsFuture,
+      builder: (context, asyncSnapshot) {
 
-      extendBodyBehindAppBar: true,
+        //Loading
+        if (asyncSnapshot.connectionState == ConnectionState.waiting) {
 
-      appBar: appBar(),
+          return Center(
+            child: Container(
+              width: double.infinity,
+              height: double.infinity,
+              color: Colors.black,
+            
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SvgPicture.asset(
+                    'assets/icons/tomato.svg',
+                    width: 50,
+                    height: 50,
+                    colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                  ),
+            
+                  SizedBox(height: 20,),
 
-      body: AnimatedContainer(
+                  SizedBox(
+                    width: 150,
+                    child: LinearProgressIndicator(
+                      color: Colors.white,
+                      backgroundColor: Color(0xff636363),
+                      borderRadius: BorderRadius.circular(20),
+                      minHeight: 5,
+                      
+                    ),
+                  )
+                ],
+              ),
+            ),
+          );
 
-        duration: Duration(milliseconds: 200),
-        curve: Curves.easeInOut,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: _bgColor,
-        ),
-        
-        child: Column(
+        }
+
+        //Loaded
+        return Stack(
+
           children: [
-            SizedBox(height: 80,),
+            
+            _mainScreen(),
 
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.start,
-              
+            if (_showConfigs)
+            _configsScreen,
+
+            if (_showEditTask)
+            newTaskScreen(
+              home: this,
+              title: toEditTask.title,
+              description: toEditTask.description,
+              cycles: toEditTask.cycles,
+              cyclesFinished: toEditTask.cyclesFinished,
+              toEdit: toEdit,
+              editTaskIdx: toEditTaskIdx,
+              ),
+          ],
+        );
+      }
+    );
+  }
+
+  Scaffold _mainScreen() {
+    return Scaffold(
+        
+          extendBodyBehindAppBar: true,
+        
+          appBar: appBar(),
+        
+          body: AnimatedContainer(
+          
+            duration: Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _bgColor,
+            ),
+            
+            child: Column(
               children: [
-
-                _modeButtons(),
+                SizedBox(height: 80,),
+          
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  
+                  children: [
+          
+                    _modeButtons(),
+                    
+                    SizedBox(height: 25,),
                 
-                SizedBox(height: 25,),
-            
-                _pomoTimerWidget(),
-            
-                SizedBox(height: 25,),
-
-                _tasksWidget(),
-
-                SizedBox(height: 15,),
-
-                //_footerWidget()
+                    _pomoTimerWidget(),
+                
+                    SizedBox(height: 25,),
+          
+                    _tasksWidget(),
+          
+                    SizedBox(height: 15,),
+          
+                    //_footerWidget()
+                  ],
+                ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
+          ),
+        );
   }
 
   Container _tasksWidget() {
@@ -329,7 +431,7 @@ class _MyHomeState extends State<MyHome> {
             
               child: ListView.separated(
                 padding: EdgeInsets.all(10),
-                itemCount: _tasksList.length + 1,
+                itemCount: _taskManager.getTasks().length + 1,
                 separatorBuilder: (context, index) => SizedBox(height: 15,),
                 itemBuilder: (context, index) {
                   
@@ -341,11 +443,11 @@ class _MyHomeState extends State<MyHome> {
             
                         onTap: () {
                           setState(() {
-                            _taskManager.addTask(
-                              TaskModel(title: 'title', description: 'description', cycles: 1, cyclesFinished: 0)
-                            );
-            
-                            _tasksList = _taskManager.getTasks();
+
+                            toEditTask = TaskModel.empty;
+                            toEditTaskIdx = -1;
+                            toEdit = false;
+                            _showEditTask = true;
                           });
                         },
             
@@ -396,81 +498,109 @@ class _MyHomeState extends State<MyHome> {
                     );
                   }
             
-                  TaskModel task = _tasksList[index - 1];
+                  TaskModel task = _taskManager.getTasks()[index - 1];
             
-                  return Container(
-                    height: 100,
-                    decoration: BoxDecoration(
-                      color: Color(0xff2C2C2C),
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
                       borderRadius: BorderRadius.circular(20),
-                    ),
-                              
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                      
-                        children: [
+
+                      onTap: () {
+                        setState(() {
+                          toEditTask = TaskModel(
+                            title: task.title,
+                            description: task.description,
+                            cycles: task.cycles,
+                            cyclesFinished: task.cyclesFinished,
+                          );
+                          toEditTaskIdx = _taskManager.getTasks().indexOf(task);
+                          toEdit = true;
+                          _showEditTask = true;
+                          //continue
+                        });
+                      },
+
+                      child: Container(
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: Color(0xff2C2C2C),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                                  
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                           
-                          Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      
                             children: [
-                      
-                              Text(
-                                task.title,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
                               
-                              SizedBox(
-                                width: 30,
-                                height: 30,
-                                child: SvgPicture.asset(
-                                    'assets/icons/edit.svg',
-                                    height: 30,
+                              Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          
+                                children: [
+                          
+                                  Expanded(
+                                    child: Text(
+                                      task.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  SizedBox(
                                     width: 30,
-                                    colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                    height: 30,
+                                    child: SvgPicture.asset(
+                                        'assets/icons/edit.svg',
+                                        height: 30,
+                                        width: 30,
+                                        colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                      ),
+                                  )
+                                ],
+                              ),
+                          
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  
+                                children: [
+                                  
+                                  Expanded(
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        //color: Colors.amber,
+                                      ),
+                                      child: Text(
+                                        task.description,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Color(0xff636363),
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                              )
-                            ],
-                          ),
-                      
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              
-                            children: [
-                              
-                              Expanded(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    //color: Colors.amber,
-                                  ),
-                                  child: Text(
-                                    task.description,
+                                  
+                                  Text(
+                                    '${task.cyclesFinished}/${task.cycles}',
                                     style: TextStyle(
-                                      color: Color(0xff636363),
-                                      fontSize: 15,
+                                      color: Colors.white,
+                                      fontSize: 20,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                ),
-                              ),
-                              
-                              Text(
-                                '${task.cyclesFinished}/${task.cycles}',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                ],
                               ),
                             ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   );
@@ -765,7 +895,9 @@ class _MyHomeState extends State<MyHome> {
             borderRadius: BorderRadius.circular(100),
 
             onTap: () {
-              _showConfigs();
+              setState(() {
+                _showConfigs = true;
+              });
             },
         
             child: Container(
@@ -790,664 +922,1157 @@ class _MyHomeState extends State<MyHome> {
     );
   }
 
-  void _showConfigs() {
-
-    //Loading configs into UI
-    final pomoController = TextEditingController(
-      text: _pomoTime.toString(),
-    );
-    final breakController = TextEditingController(
-      text: _breakTime.toString(),
-    );
-
-    bool autoStartOn = _autoStartTimersOn;
-    bool playAlarmsOn = _playAlarmsOn;
-
-    entry = OverlayEntry(
-      builder: (context) {
-
-        return Stack(
-          
-          children: [
-            
-            GestureDetector(
-              onTap: () {
-                _closeConfigs();
-              },
-
-              child: Container(
-                width: double.infinity,
-                height: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-            
-            Positioned(
-            right: 20,
-            bottom: 20,
-            left: 20,
-            top: 40,
-            
-            child: Material(
-              color: Colors.transparent,
-          
-              child: Container(
-                width: 340,
-                padding: EdgeInsets.only(top: 20, bottom: 20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              
-                child: Column(
-                  children: [
-                    Text(
-                      'Configurações',
-                      style: TextStyle(
-                        height: 1,
-                        color: Color(0xff2C2C2C),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 32,
-                      ),
-                    ),
-          
-                    Padding(
-                      padding: const EdgeInsets.only(left: 18, right: 18),
-                      child: Divider(
-                        color: Color(0xffE6E6E6),
-                        thickness: 2.5,
-                      ),
-                    ),
-          
-                    Expanded(
-                      child: Container(
-                        clipBehavior: Clip.hardEdge,
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-
-                        child: ListView(
-                          padding: EdgeInsets.all(0),
-                          children: [
-
-                            Container(
-                              height: 250,
-                              decoration: BoxDecoration(
-                                color: Colors.transparent,
-                              ),
-
-                              child: Column(
-                                children: [
-
-                                Text(
-                                  'Timers',
-                                  style: TextStyle(
-                                    color: Color(0xff2C2C2C),
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                
-                                SizedBox(height: 8,),
-                                
-                                //Pomodoro TextField
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 16, right: 16),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      
-                                      Text(
-                                      'Pomodoro',
-                                      style: TextStyle(
-                                        color: Color(0xffACACAC),
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                  
-                                      SizedBox(
-                                        width: 150,
-                                        height: 50,
-                                
-                                        child: TextField(
-                                          controller: pomoController,
-                                          onChanged: (value) {
-                                            int newPomoTime = int.parse(value);
-                                
-                                            //Clamps value between 1 and 999
-                                            if (newPomoTime > 999) {
-                                              newPomoTime = 999;   
-                                            } else if (newPomoTime < 1) {
-                                              newPomoTime = 1;
-                                            }
-                                
-                                            //Sets TextField's text to clampped number
-                                            pomoController.text = '$newPomoTime';
-                                            pomoController.selection = TextSelection.fromPosition(
-                                              TextPosition(offset: pomoController.text.length),
-                                            );
-                                
-                                            //Sets timer if timer not running
-                                            if (isPomo && _timerRunning == false) {
-                                              setState(() {
-                                                _setTimer(newPomoTime);
-                                              });
-                                            }
-                                            _currentTime = newPomoTime;
-                                            _pomoTime = newPomoTime;
-                                            _saveConfigs();
-                                          },
-                                
-                                          keyboardType: TextInputType.number,
-                                          inputFormatters: [
-                                            FilteringTextInputFormatter.digitsOnly
-                                          ],
-                                
-                                          style: TextStyle(
-                                            color: Color(0xff2C2C2C),
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                
-                                          textAlign: TextAlign.center,
-                                          textAlignVertical: TextAlignVertical.center,
-                                          decoration: InputDecoration(
-                                            border: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            
-                                            contentPadding: EdgeInsets.all(0),
-                                            hintText: '25',
-                                            hintStyle: TextStyle(
-                                              color: Color(0xffACACAC),
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            filled: true,
-                                            fillColor: Color(0xffE6E6E6),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                
-                                SizedBox(height: 20,),
-                                
-                                //Break TextField
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 16, right: 16),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      
-                                      Text(
-                                      'Descanso',
-                                      style: TextStyle(
-                                        color: Color(0xffACACAC),
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                  
-                                      SizedBox(
-                                        width: 150,
-                                        height: 50,
-                                
-                                        child: TextField(
-                                          controller: breakController,
-                                          onChanged: (value) {
-                                            int newBreakTime = int.parse(value);
-                                
-                                            //Clamps value between 1 and 999
-                                            if (newBreakTime > 999) {
-                                              newBreakTime = 999;   
-                                            } else if (newBreakTime < 1) {
-                                              newBreakTime = 1;
-                                            }
-                                
-                                            //Sets textfield's text to clampped number
-                                            breakController.text = '$newBreakTime';
-                                            breakController.selection = TextSelection.fromPosition(
-                                              TextPosition(offset: breakController.text.length),
-                                            );
-                                
-                                            //Changes InApp timer if it's selected and not running
-                                            if (!isPomo && _timerRunning == false) {
-                                              setState(() {
-                                                _setTimer(newBreakTime);
-                                              });
-                                            }
-                                
-                                            _currentTime = newBreakTime;
-                                            _breakTime = newBreakTime;
-                                            _saveConfigs();                                              
-                                          },
-                                
-                                          keyboardType: TextInputType.number,
-                                          inputFormatters: [
-                                            FilteringTextInputFormatter.digitsOnly
-                                          ],
-                                
-                                          style: TextStyle(
-                                            color: Color(0xff2C2C2C),
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                
-                                          textAlign: TextAlign.center,
-                                          textAlignVertical: TextAlignVertical.center,
-                                          decoration: InputDecoration(
-                                            border: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius: BorderRadius.circular(20),
-                                              borderSide: BorderSide(color: Colors.transparent),
-                                            ),
-                                            
-                                            contentPadding: EdgeInsets.all(0),
-                                            hintText: '5',
-                                            hintStyle: TextStyle(
-                                              color: Color(0xffACACAC),
-                                              fontSize: 20,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            filled: true,
-                                            fillColor: Color(0xffE6E6E6),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                                                
-                                SizedBox(height: 20,),
-                                
-                                //AutoStart Switch
-                                StatefulBuilder(
-                                  builder: (context, setState) => Padding(
-                                
-                                    padding: const EdgeInsets.only(left: 16, right: 24),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        
-                                        Text(
-                                        'Auto Início',
-                                        style: TextStyle(
-                                          color: Color(0xffACACAC),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                    
-                                        Transform.scale(
-                                          scale: 1.5,
-                                          child: Switch(
-                                            value: autoStartOn,
-                                                                              
-                                            onChanged: (value) {
-                                              setState(() {
-                                                autoStartOn = value;
-                                                _autoStartTimersOn = autoStartOn;
-                                                _saveConfigs();
-                                              });
-                                            },
-                                            
-                                            activeThumbColor: Colors.white,
-                                            activeTrackColor: _breakColor,
-                                            inactiveTrackColor: _pomoColor,
-                                            inactiveThumbColor: Colors.white,
-                                          
-                                            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-                                          ),
-                                        )
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ]
-                              ),
-                            ),
-
-                            Padding(
-                              padding: const EdgeInsets.only(left: 16.0, right: 16.0),
-                              child: Divider(
-                                color: Color(0xffE6E6E6),
-                                thickness: 2.5,
-                              ),
-                            ),
-
-                            Container(
-                              height: 250,
-                              decoration: BoxDecoration(
-                                color: Colors.transparent,
-                              ),
-
-                              child: Column(
-                                children: [
-
-                                Text(
-                                  'Alarmes',
-                                  style: TextStyle(
-                                    color: Color(0xff2C2C2C),
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                
-                                SizedBox(height: 8,),
-                                
-                                //AutoStart Switch
-                                StatefulBuilder(
-                                  builder: (context, setState) => Padding(
-                                
-                                    padding: const EdgeInsets.only(left: 16, right: 24),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        
-                                        Text(
-                                        'Tocar Alarmes',
-                                        style: TextStyle(
-                                          color: Color(0xffACACAC),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                    
-                                        Transform.scale(
-                                          scale: 1.5,
-                                          child: Switch(
-                                            value: playAlarmsOn,
-                                                                              
-                                            onChanged: (value) {
-                                              setState(() {
-                                                playAlarmsOn = value;
-                                                _playAlarmsOn = playAlarmsOn;
-                                                _saveConfigs();
-                                              });
-                                            },
-                                            
-                                            activeThumbColor: Colors.white,
-                                            activeTrackColor: _breakColor,
-                                            inactiveTrackColor: _pomoColor,
-                                            inactiveThumbColor: Colors.white,
-                                          
-                                            trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
-                                          ),
-                                        )
-                                      ],
-                                    ),
-                                  ),
-                                ),
-
-                                SizedBox(height: 20,),
-
-                                //Pomodoro Dropdown
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 16, right: 16),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      
-                                      Text(
-                                      'Pomodoro',
-                                      style: TextStyle(
-                                        color: Color(0xffACACAC),
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-
-                                      DropdownMenu(
-                                        width: 150,
-                                        initialSelection: _pomoAlarm,
-                                        
-                                        onSelected: (value) {
-
-                                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                                                _playAudio(alarms[value]);
-                                            });
-                                            _pomoAlarm = value ?? _pomoAlarm;
-                                            _saveConfigs();
-                                        }, 
-
-                                        menuHeight: 250,
-
-                                        trailingIcon: RotatedBox(
-                                          quarterTurns: 2,
-                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
-                                          ),
-                                        
-                                        selectedTrailingIcon: RotatedBox(
-                                          quarterTurns: 0,
-                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
-                                        ),
-
-                                        label: const Text(
-                                          'Som',
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.normal,
-                                            color: Color(0xff2C2C2C),
-                                          ),
-                                        ),
-                                      
-                                        textStyle: TextStyle(
-                                          color: Color(0xff2C2C2C),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      
-                                        inputDecorationTheme: InputDecorationTheme(
-                                          isDense: true,
-                                          contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
-                                          filled: true,
-                                          fillColor: Color(0xffE6E6E6),
-                                          
-                                          border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(20),
-                                            borderSide: BorderSide.none,
-                                          )
-                                        ),
-                                      
-                                        menuStyle: MenuStyle(
-                                          elevation: WidgetStatePropertyAll(0.0),
-                                          backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
-                                          shape: WidgetStatePropertyAll(
-                                            RoundedRectangleBorder(
-                                              borderRadius: BorderRadiusGeometry.circular(20)
-                                            )
-                                          )
-                                        ),
-                                      
-                                        dropdownMenuEntries: const [
-                                          DropdownMenuEntry(value: '1', label: 'Alarm'),
-                                          DropdownMenuEntry(value: '2', label: 'Birds'),
-                                          DropdownMenuEntry(value: '3', label: 'Error'),
-                                          DropdownMenuEntry(value: '4', label: 'Soft Synth'),
-                                          DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                
-                                SizedBox(height: 20,),
-                                                                
-                                                                //Pomodoro Dropdown
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 16, right: 16),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      
-                                      Text(
-                                      'Descanso',
-                                      style: TextStyle(
-                                        color: Color(0xffACACAC),
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                                                      
-                                      DropdownMenu(
-                                        width: 150,
-                                        initialSelection: _breakAlarm,
-                                        
-                                        onSelected: (value) {
-                                                                      
-                                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                                                _playAudio(alarms[value]);
-                                            });
-                                            _breakAlarm = value ?? _breakAlarm;
-                                            _saveConfigs();
-                                        }, 
-                                                                      
-                                        menuHeight: 250,
-                                      
-                                        trailingIcon: RotatedBox(
-                                          quarterTurns: 2,
-                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
-                                          ),
-                                        
-                                        selectedTrailingIcon: RotatedBox(
-                                          quarterTurns: 0,
-                                          child: SvgPicture.asset('assets/icons/arrow.svg'),
-                                        ),
-
-                                        label: const Text(
-                                          'Som',
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.normal,
-                                            color: Color(0xff2C2C2C),
-                                          ),
-                                        ),
-                                      
-                                        textStyle: TextStyle(
-                                          color: Color(0xff2C2C2C),
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      
-                                        inputDecorationTheme: InputDecorationTheme(
-                                          isDense: true,
-                                          contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
-                                          filled: true,
-                                          fillColor: Color(0xffE6E6E6),
-                                          
-                                          border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(20),
-                                            borderSide: BorderSide.none,
-                                          )
-                                        ),
-                                      
-                                        menuStyle: MenuStyle(
-                                          elevation: WidgetStatePropertyAll(0.0),
-                                          backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
-                                          shape: WidgetStatePropertyAll(
-                                            RoundedRectangleBorder(
-                                              borderRadius: BorderRadiusGeometry.circular(20)
-                                            )
-                                          )
-                                        ),
-                                      
-                                        dropdownMenuEntries: const [
-                                          DropdownMenuEntry(value: '1', label: 'Alarm'),
-                                          DropdownMenuEntry(value: '2', label: 'Birds'),
-                                          DropdownMenuEntry(value: '3', label: 'Error'),
-                                          DropdownMenuEntry(value: '4', label: 'Soft Synth'),
-                                          DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
-                                        ],
-                                      ),
-                                      ],
-                                    ),
-                                ),
-                              ]
-                              ),
-                            )
-                          ]  
-                        ),
-                      ),
-                    ),
-          
-                    SizedBox(height: 10,),
-          
-                    ElevatedButton(
-                      onPressed: () {
-                        _closeConfigs();
-                      },
-                      
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xffE6E6E6),
-                        elevation: 0.0,
-                        shadowColor: Colors.transparent,
-          
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadiusGeometry.circular(20),
-                        ),
-          
-                        minimumSize: Size(
-                          150,60
-                        )
-                      ),
-          
-                      child: Text(
-                        'Voltar',
-                        style: TextStyle(
-                          height: 1,
-                          color: Color(0xff2C2C2C),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 20,
-                        ),
-                      ),
-                    )
-                  ],
-                ),
-              ),
-            ),
-          ),
-          ]
-        );
-      },
-    );
-
-    final overlay = Overlay.of(context);
-    overlay.insert(entry);
-
-  }
-
-  void _closeConfigs() {
-    // ignore: unnecessary_null_comparison
-    if (entry != null) {
-      entry.remove();
-    }
-  }
-
   @override
   void dispose() {
     _pomoTimer?.cancel(); // stop the timer when widget is destroyed
     super.dispose();
   }
+}
+
+//New task overlay
+class newTaskScreen extends StatefulWidget {
+
+  final _MyHomeState home;
+  final String title;
+  final String description;
+  final int cycles;
+  final int cyclesFinished;
+  final bool toEdit;
+  final int editTaskIdx;
+
+  const newTaskScreen({
+    super.key,
+    required this.home,
+    required this.title,
+    required this.description,
+    required this.cycles,
+    required this.cyclesFinished,
+    required this.toEdit,
+    required this.editTaskIdx,
+  });
+
+  @override
+  State<newTaskScreen> createState() => _newTaskScreenState();
+}
+
+class _newTaskScreenState extends State<newTaskScreen> {
+
+  late TextEditingController titleController;
+  late TextEditingController descController;
+  late TextEditingController cyclesController;
+  
+  late String _taskTitle = '';
+  late String _taskDesc = '';
+  late int _taskCycles = widget.cycles; 
+
+  bool _canSave = false;
+  bool _showDesc = false;
+
+  void initState() {
+    super.initState();
+
+    titleController = TextEditingController(
+      text: widget.title,
+    );
+
+    descController = TextEditingController(
+      text: widget.description,
+    );
+
+    cyclesController = TextEditingController(
+      text: widget.cycles.toString(),
+    );
+
+    if (widget.toEdit) {
+      _taskTitle = widget.title;
+      _taskDesc = widget.description;
+      _taskCycles = widget.cycles;
+    }
+
+    if (widget.description != '') {
+      _showDesc = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              widget.home.setState(() {
+                widget.home._showEditTask = false;
+              });
+            },
+          
+            child: Container(
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+        ),
+
+        Material(
+          color: Colors.transparent,
+
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+
+            child: Center(
+              child: Container(
+
+                decoration: BoxDecoration(
+                  color: Color(0xff2C2C2C),
+                  borderRadius: BorderRadius.circular(20)
+                ),
+              
+                child: ConstrainedBox(
+                  
+                  constraints: BoxConstraints(
+                    maxHeight: 300,
+                    minHeight: 150,
+                  ),
+              
+                  child: Padding(
+                    padding: const EdgeInsets.all(10.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+
+                      children: [
+                        //Row 1
+                        Row(
+                          children: [
+                            
+                            Expanded(
+                              child: TextField(
+                                controller: titleController,
+                                keyboardType: TextInputType.multiline,
+
+                                onChanged: (value) {
+                                  _taskTitle = value;
+
+                                  setState(() {
+                                      if (value == "") {
+                                      _canSave = false;
+                                    }
+
+                                    else {
+                                      _canSave = true;
+                                    }
+                                  });
+                                },
+
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold
+                                ),
+                                                      
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  border: OutlineInputBorder(borderSide: BorderSide.none),
+                                  hint: Text(
+                                    'Título da Tarefa',
+                                    
+                                    style: TextStyle(
+                                      color: Color(0xff636363),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                   filled: true,
+                                   fillColor: Colors.transparent,
+                                )
+                              ),
+                            ),
+                        
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  
+                                  widget.home.setState(() {
+                                    
+                                    if (widget.home.toEditTask.cyclesFinished > _taskCycles) {
+                                      widget.home.toEditTask.cyclesFinished = _taskCycles;
+                                    }
+
+                                    if (widget.toEdit) {
+                                      widget.home._taskManager.editTask(
+                                        widget.editTaskIdx,
+                                        
+                                        TaskModel( 
+                                        title: _taskTitle,
+                                        description: _taskDesc,
+                                        cycles: _taskCycles,
+                                        cyclesFinished: widget.home.toEditTask.cyclesFinished,
+                                      ));
+                                    }
+
+                                    else if (_taskTitle != '') {
+                                      widget.home._taskManager.addTask(TaskModel(
+                                        title: _taskTitle,
+                                        description: _taskDesc,
+                                        cycles: _taskCycles,
+                                        cyclesFinished: 0,
+                                      ));
+                                    }
+
+                                    if (_taskTitle == '' && widget.toEdit) {
+                                      return;
+                                    }
+
+                                    widget.home._showEditTask = false;
+                                    widget.home._saveConfigs();
+                                  });
+                                },
+                            
+                                borderRadius: BorderRadius.circular(100),
+                            
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                
+                                  decoration: BoxDecoration(
+                                    color: Colors.transparent ,
+                                    borderRadius: BorderRadius.circular(100),
+                                  ),
+                                
+                                  child: Column(
+                                    children: [
+                                      Visibility(
+                                        visible: !_canSave,
+                                        child: SvgPicture.asset(
+                                          'assets/icons/close.svg',
+                                          width: 40,
+                                          height: 40,
+                                          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                        ),
+                                      ),
+
+                                      Visibility(
+                                        visible: _canSave,
+                                        child: RotatedBox(
+                                          quarterTurns: 1,
+                                          child: SvgPicture.asset(
+                                            'assets/icons/arrow.svg',
+                                            width: 30,
+                                            height: 30,
+                                            colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        Visibility(
+                          visible: _showDesc,
+
+                          child: TextField(
+                            controller: descController,
+                            keyboardType: TextInputType.multiline,
+                            minLines: 1,
+                            maxLines: 3,
+                          
+                            onChanged: (value) {
+                              _taskDesc = value;
+                            },
+                          
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold
+                            ),
+                                                  
+                            decoration: InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                              border: OutlineInputBorder(borderSide: BorderSide.none),
+                              hint: Text(
+                                'Descrição...',
+                                
+                                style: TextStyle(
+                                  color: Color(0xff636363),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                                filled: true,
+                                fillColor: Colors.transparent,
+                            )
+                          ),
+                        ),
+
+                        Visibility(
+                          visible: !_showDesc,
+                          child: Material(
+                            color: Colors.transparent,
+                          
+                            child: InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _showDesc = true;
+                                });
+                              },
+                          
+                              child: Text(
+                                '+ Adicionar descrição...',
+                                
+                                style: TextStyle(
+                                  backgroundColor: Colors.transparent,
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        SizedBox(height: 30,),
+
+                        Center(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              
+                              Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      int textInt = int.parse(cyclesController.text);
+
+                                      if (textInt > 1) {
+                                        cyclesController.text = (textInt - 1).toString();
+
+                                        _taskCycles--;
+                                      }
+                                    });
+                                  },
+                                  
+                                  borderRadius: BorderRadius.circular(100),
+
+                                  child: Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Column(
+                                          children: [
+                                            
+                                            SvgPicture.asset(
+                                              'assets/icons/arrow.svg',
+                                              width: 30,
+                                              height: 30,
+                                              colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              SizedBox(width: 10,),
+
+                              SizedBox(
+                                width: 120,
+                                child: TextField(
+                                  controller: cyclesController,
+                                  textAlign: TextAlign.center,
+                                  textAlignVertical: TextAlignVertical.center,
+                                  keyboardType: TextInputType.number,
+
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+
+                                  onChanged: (value) {
+                                    int intValue = int.parse(value);
+
+                                    if (value.isEmpty) {
+                                      _taskCycles = 1;
+                                    }
+
+                                    else if (intValue > 999) {
+                                      _taskCycles = 999;
+                                    }
+
+                                    else if (intValue < 1) {
+                                      _taskCycles = 1;
+                                    }
+
+                                    else if (intValue >= 1 && intValue <= 999) {
+                                      _taskCycles = intValue;
+                                    }
+                                    
+                                    cyclesController.text = _taskCycles.toString();
+                                  },
+
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold
+                                  ),
+                                                        
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 5, horizontal: 0),
+                                    border: OutlineInputBorder(
+                                      borderSide: BorderSide.none,
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    
+                                    hint: Text(
+                                      'Ciclos',
+                                      
+                                      style: TextStyle(
+                                        color: Color(0xff636363),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                      filled: true,
+                                      fillColor: Color(0xff636363),
+                                  )
+                                ),
+                              ),
+
+                              SizedBox(width: 10,),
+
+                              Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      int textInt = int.parse(cyclesController.text);
+
+                                      if (textInt < 999) {
+                                        cyclesController.text = ( textInt + 1).toString();
+                                        _taskCycles++;
+                                      }
+                                    });
+                                  },
+                                  
+                                  borderRadius: BorderRadius.circular(100),
+
+                                  child: Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: RotatedBox(
+                                        quarterTurns: 1,
+                                        child: SvgPicture.asset(
+                                          'assets/icons/arrow.svg',
+                                          width: 30,
+                                          height: 30,
+                                          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+      ],
+    );
+  }
+}
+
+//Configurations Overlay
+class ConfigsOverlay extends StatefulWidget {
+
+  final _MyHomeState home;
+
+  const ConfigsOverlay({
+    super.key,
+    required this.home,
+  });
+
+  @override
+  State<ConfigsOverlay> createState() => _ConfigsOverlayState();
+}
+
+class _ConfigsOverlayState extends State<ConfigsOverlay> {
+
+  late TextEditingController pomoController;
+  late TextEditingController breakController;
+
+  @override 
+  void initState() {
+    super.initState();
+
+    pomoController = TextEditingController(
+      text: widget.home._pomoTime.toString(),
+    );
+
+    breakController = TextEditingController(
+      text: widget.home._breakTime.toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    pomoController.dispose();
+    breakController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      
+      children: [
+        
+        GestureDetector(
+          onTap: () {
+            widget.home.setState(() {
+              widget.home._showConfigs = false;
+            });
+          },
+
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+        
+        Positioned(
+        right: 20,
+        bottom: 20,
+        left: 20,
+        top: 40,
+        
+        child: Material(
+          color: Colors.transparent,
+      
+          child: Container(
+            width: 340,
+            padding: EdgeInsets.only(top: 20, bottom: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+          
+            child: Column(
+              children: [
+                Text(
+                  'Configurações',
+                  style: TextStyle(
+                    height: 1,
+                    color: Color(0xff2C2C2C),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 32,
+                  ),
+                ),
+      
+                Padding(
+                  padding: const EdgeInsets.only(left: 18, right: 18),
+                  child: Divider(
+                    color: Color(0xffE6E6E6),
+                    thickness: 2.5,
+                  ),
+                ),
+      
+                Expanded(
+                  child: Container(
+                    clipBehavior: Clip.hardEdge,
+                    decoration: BoxDecoration(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+
+                    child: ListView(
+                      padding: EdgeInsets.all(0),
+                      children: [
+
+                        Container(
+                          height: 250,
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                          ),
+
+                          child: Column(
+                            children: [
+
+                            Text(
+                              'Timers',
+                              style: TextStyle(
+                                color: Color(0xff2C2C2C),
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            
+                            SizedBox(height: 8,),
+                            
+                            //Pomodoro TextField
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16, right: 16),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  
+                                  Text(
+                                  'Pomodoro',
+                                  style: TextStyle(
+                                    color: Color(0xffACACAC),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                              
+                                  SizedBox(
+                                    width: 150,
+                                    height: 50,
+                            
+                                    child: TextField(
+                                      controller: pomoController,
+                                      onChanged: (value) {
+                                        int newPomoTime = int.parse(value);
+                            
+                                        //Clamps value between 1 and 999
+                                        if (newPomoTime > 999) {
+                                          newPomoTime = 999;   
+                                        } else if (newPomoTime < 1) {
+                                          newPomoTime = 1;
+                                        }
+                            
+                                        //Sets TextField's text to clampped number
+                                        pomoController.text = '$newPomoTime';
+                                        pomoController.selection = TextSelection.fromPosition(
+                                          TextPosition(offset: pomoController.text.length),
+                                        );
+                            
+                                        //Sets timer if timer not running
+                                        if (widget.home.isPomo && widget.home._timerRunning == false) {
+                                          widget.home.setState(() {
+                                            widget.home._setTimer(newPomoTime);
+                                          });
+                                        }
+                                        widget.home._currentTime = newPomoTime;
+                                        widget.home._pomoTime = newPomoTime;
+                                        widget.home._saveConfigs();
+                                      },
+                            
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly
+                                      ],
+                            
+                                      style: TextStyle(
+                                        color: Color(0xff2C2C2C),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                            
+                                      textAlign: TextAlign.center,
+                                      textAlignVertical: TextAlignVertical.center,
+                                      decoration: InputDecoration(
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        
+                                        contentPadding: EdgeInsets.all(0),
+                                        hintText: '25',
+                                        hintStyle: TextStyle(
+                                          color: Color(0xffACACAC),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        filled: true,
+                                        fillColor: Color(0xffE6E6E6),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                            SizedBox(height: 20,),
+                            
+                            //Break TextField
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16, right: 16),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  
+                                  Text(
+                                  'Descanso',
+                                  style: TextStyle(
+                                    color: Color(0xffACACAC),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                              
+                                  SizedBox(
+                                    width: 150,
+                                    height: 50,
+                            
+                                    child: TextField(
+                                      controller: breakController,
+                                      onChanged: (value) {
+                                        int newBreakTime = int.parse(value);
+                            
+                                        //Clamps value between 1 and 999
+                                        if (newBreakTime > 999) {
+                                          newBreakTime = 999;   
+                                        } else if (newBreakTime < 1) {
+                                          newBreakTime = 1;
+                                        }
+                            
+                                        //Sets textfield's text to clampped number
+                                        breakController.text = '$newBreakTime';
+                                        breakController.selection = TextSelection.fromPosition(
+                                          TextPosition(offset: breakController.text.length),
+                                        );
+                            
+                                        //Changes InApp timer if it's selected and not running
+                                        if (!widget.home.isPomo && widget.home._timerRunning == false) {
+                                          widget.home.setState(() {
+                                            widget.home._setTimer(newBreakTime);
+                                          });
+                                        }
+                            
+                                        widget.home._currentTime = newBreakTime;
+                                        widget.home._breakTime = newBreakTime;
+                                        widget.home._saveConfigs();                                              
+                                      },
+                            
+                                      keyboardType: TextInputType.number,
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly
+                                      ],
+                            
+                                      style: TextStyle(
+                                        color: Color(0xff2C2C2C),
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                            
+                                      textAlign: TextAlign.center,
+                                      textAlignVertical: TextAlignVertical.center,
+                                      decoration: InputDecoration(
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(20),
+                                          borderSide: BorderSide(color: Colors.transparent),
+                                        ),
+                                        
+                                        contentPadding: EdgeInsets.all(0),
+                                        hintText: '5',
+                                        hintStyle: TextStyle(
+                                          color: Color(0xffACACAC),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        filled: true,
+                                        fillColor: Color(0xffE6E6E6),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                                                            
+                            SizedBox(height: 20,),
+                            
+                            //AutoStart Switch
+                            StatefulBuilder(
+                              builder: (context, setState) => Padding(
+                            
+                                padding: const EdgeInsets.only(left: 16, right: 24),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    
+                                    Text(
+                                    'Auto Início',
+                                    style: TextStyle(
+                                      color: Color(0xffACACAC),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                
+                                    Transform.scale(
+                                      scale: 1.5,
+                                      child: Switch(
+                                        value: widget.home._autoStartTimersOn,
+                                                                          
+                                        onChanged: (value) {
+                                          widget.home.setState(() {
+                                            widget.home._autoStartTimersOn = value;
+                                            widget.home._saveConfigs();
+                                          });
+                                        },
+                                        
+                                        activeThumbColor: Colors.white,
+                                        activeTrackColor: widget.home._breakColor,
+                                        inactiveTrackColor: widget.home._pomoColor,
+                                        inactiveThumbColor: Colors.white,
+                                      
+                                        trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                                      ),
+                                    )
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ]
+                          ),
+                        ),
+
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16.0, right: 16.0),
+                          child: Divider(
+                            color: Color(0xffE6E6E6),
+                            thickness: 2.5,
+                          ),
+                        ),
+
+                        Container(
+                          height: 250,
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                          ),
+
+                          child: Column(
+                            children: [
+
+                            Text(
+                              'Alarmes',
+                              style: TextStyle(
+                                color: Color(0xff2C2C2C),
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            
+                            SizedBox(height: 8,),
+                            
+                            //AutoStart Switch
+                            StatefulBuilder(
+                              builder: (context, setState) => Padding(
+                            
+                                padding: const EdgeInsets.only(left: 16, right: 24),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    
+                                    Text(
+                                    'Tocar Alarmes',
+                                    style: TextStyle(
+                                      color: Color(0xffACACAC),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                
+                                    Transform.scale(
+                                      scale: 1.5,
+                                      child: Switch(
+                                        value: widget.home._playAlarmsOn,
+                                                                          
+                                        onChanged: (value) {
+                                          setState(() {
+                                            widget.home._playAlarmsOn = value;
+                                            widget.home._saveConfigs();
+                                          });
+                                        },
+                                        
+                                        activeThumbColor: Colors.white,
+                                        activeTrackColor: widget.home._breakColor,
+                                        inactiveTrackColor: widget.home._pomoColor,
+                                        inactiveThumbColor: Colors.white,
+                                      
+                                        trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+                                      ),
+                                    )
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            SizedBox(height: 20,),
+
+                            //Pomodoro Dropdown
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16, right: 16),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  
+                                  Text(
+                                  'Pomodoro',
+                                  style: TextStyle(
+                                    color: Color(0xffACACAC),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+
+                                  DropdownMenu(
+                                    width: 150,
+                                    initialSelection: widget.home._pomoAlarm,
+                                    
+                                    onSelected: (value) {
+
+                                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                                            widget.home._playAudio(widget.home.alarms[value]);
+                                        });
+                                        widget.home._pomoAlarm = value ?? widget.home._pomoAlarm;
+                                        widget.home._saveConfigs();
+                                    }, 
+
+                                    menuHeight: 250,
+
+                                    trailingIcon: RotatedBox(
+                                      quarterTurns: 2,
+                                      child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                      ),
+                                    
+                                    selectedTrailingIcon: RotatedBox(
+                                      quarterTurns: 0,
+                                      child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                    ),
+
+                                    label: const Text(
+                                      'Som',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.normal,
+                                        color: Color(0xff2C2C2C),
+                                      ),
+                                    ),
+                                  
+                                    textStyle: TextStyle(
+                                      color: Color(0xff2C2C2C),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  
+                                    inputDecorationTheme: InputDecorationTheme(
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
+                                      filled: true,
+                                      fillColor: Color(0xffE6E6E6),
+                                      
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(20),
+                                        borderSide: BorderSide.none,
+                                      )
+                                    ),
+                                  
+                                    menuStyle: MenuStyle(
+                                      elevation: WidgetStatePropertyAll(0.0),
+                                      backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
+                                      shape: WidgetStatePropertyAll(
+                                        RoundedRectangleBorder(
+                                          borderRadius: BorderRadiusGeometry.circular(20)
+                                        )
+                                      )
+                                    ),
+                                  
+                                    dropdownMenuEntries: const [
+                                      DropdownMenuEntry(value: '1', label: 'Alarm'),
+                                      DropdownMenuEntry(value: '2', label: 'Birds'),
+                                      DropdownMenuEntry(value: '3', label: 'Error'),
+                                      DropdownMenuEntry(value: '4', label: 'Soft Synth'),
+                                      DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                            SizedBox(height: 20,),
+                                                            
+                            //Pomodoro Dropdown
+                            Padding(
+                              padding: const EdgeInsets.only(left: 16, right: 16),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  
+                                  Text(
+                                  'Descanso',
+                                  style: TextStyle(
+                                    color: Color(0xffACACAC),
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                                                  
+                                  DropdownMenu(
+                                    width: 150,
+                                    initialSelection: widget.home._breakAlarm,
+                                    
+                                    onSelected: (value) {
+                                                                  
+                                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                                            widget.home._playAudio(widget.home.alarms[value]);
+                                        });
+                                        widget.home._breakAlarm = value ?? widget.home._breakAlarm;
+                                        widget.home._saveConfigs();
+                                    }, 
+                                                                  
+                                    menuHeight: 250,
+                                  
+                                    trailingIcon: RotatedBox(
+                                      quarterTurns: 2,
+                                      child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                      ),
+                                    
+                                    selectedTrailingIcon: RotatedBox(
+                                      quarterTurns: 0,
+                                      child: SvgPicture.asset('assets/icons/arrow.svg'),
+                                    ),
+
+                                    label: const Text(
+                                      'Som',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.normal,
+                                        color: Color(0xff2C2C2C),
+                                      ),
+                                    ),
+                                  
+                                    textStyle: TextStyle(
+                                      color: Color(0xff2C2C2C),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  
+                                    inputDecorationTheme: InputDecorationTheme(
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.only(top: 2, bottom: 2, left: 8),
+                                      filled: true,
+                                      fillColor: Color(0xffE6E6E6),
+                                      
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(20),
+                                        borderSide: BorderSide.none,
+                                      )
+                                    ),
+                                  
+                                    menuStyle: MenuStyle(
+                                      elevation: WidgetStatePropertyAll(0.0),
+                                      backgroundColor: WidgetStatePropertyAll(Color(0xffE6E6E6)),
+                                      shape: WidgetStatePropertyAll(
+                                        RoundedRectangleBorder(
+                                          borderRadius: BorderRadiusGeometry.circular(20)
+                                        )
+                                      )
+                                    ),
+                                  
+                                    dropdownMenuEntries: const [
+                                      DropdownMenuEntry(value: '1', label: 'Alarm'),
+                                      DropdownMenuEntry(value: '2', label: 'Birds'),
+                                      DropdownMenuEntry(value: '3', label: 'Error'),
+                                      DropdownMenuEntry(value: '4', label: 'Soft Synth'),
+                                      DropdownMenuEntry(value: '5', label: 'Wind Chimes'),
+                                    ],
+                                  ),
+                                  ],
+                                ),
+                            ),
+                          ]
+                          ),
+                        )
+                      ]  
+                    ),
+                  ),
+                ),
+      
+                SizedBox(height: 10,),
+      
+                ElevatedButton(
+                  onPressed: () {
+                    widget.home.setState(() {
+                      widget.home._showConfigs = false;
+                    });
+                  },
+                  
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xffE6E6E6),
+                    elevation: 0.0,
+                    shadowColor: Colors.transparent,
+      
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadiusGeometry.circular(20),
+                    ),
+      
+                    minimumSize: Size(
+                      150,60
+                    )
+                  ),
+      
+                  child: Text(
+                    'Voltar',
+                    style: TextStyle(
+                      height: 1,
+                      color: Color(0xff2C2C2C),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+      ]
+    );
+  }
+
 }

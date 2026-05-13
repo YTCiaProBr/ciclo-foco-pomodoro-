@@ -7,6 +7,13 @@ class TaskModel {
   int cyclesFinished = 0;
   int cycles = 0;
 
+  static TaskModel empty = TaskModel(
+    title: '',
+    description: '',
+    cycles: 1,
+    cyclesFinished: 0,
+  );
+
   TaskModel({
     required this.title,
     required this.description,
@@ -14,17 +21,44 @@ class TaskModel {
     required this.cyclesFinished,
   });
 
-  void setTasks(List<TaskModel> taskList) {
-    tasks = taskList;
-  }
-
   List<TaskModel> getTasks() {
     return tasks;
+  }
+
+  void setTasks(List newTasks) {
+    for (var task in newTasks) {
+      tasks.add(fromMap(task));
+    }
   }
 
   void addTask(TaskModel task) {
     tasks.insert(0,task);
   }                                                   
+
+    void propagateAddCycle() {
+    for (TaskModel task in tasks) {
+      task.addCycle();
+    }
+  }
+
+  void addCycle() {
+    if (cyclesFinished < cycles) {
+        cyclesFinished++;
+    }
+
+    if (cyclesFinished == cycles) {
+      
+    }
+  }
+
+  void editTask(int taskIdx, TaskModel editedTask) {
+    if (taskIdx < 0 || taskIdx > tasks.length) {
+      return;
+      
+    }
+
+    tasks[taskIdx] = editedTask;
+  }
 
   void removeTask(TaskModel task) {
     tasks.remove(task);
@@ -41,13 +75,15 @@ class TaskModel {
     return taskMap;
   }
 
-  TaskModel fromMap(Map taskMap) {
+  TaskModel fromMap(Map<String, dynamic> taskMap) {
+    print('LOADING $taskMap');
     TaskModel task = TaskModel(
       title: taskMap['title'],
       description: taskMap['description'],
       cycles:  taskMap['cycles'],
       cyclesFinished: taskMap['cyclesfinished'],
     );
+    print('LOADED $task');
 
     return task;
   }
