@@ -1,17 +1,22 @@
+import 'package:uuid/uuid.dart';
+
 class TaskModel {
 
   List<TaskModel> tasks = [];
 
+  final String id = Uuid().v7();
   String title = '';
   String description = '';
   int cyclesFinished = 0;
   int cycles = 0;
+  bool isCompleted = false;
 
   static TaskModel empty = TaskModel(
     title: '',
     description: '',
     cycles: 1,
     cyclesFinished: 0,
+    isCompleted: false,
   );
 
   TaskModel({
@@ -19,6 +24,7 @@ class TaskModel {
     required this.description,
     required this.cycles,
     required this.cyclesFinished,
+    required this.isCompleted,
   });
 
   List<TaskModel> getTasks() {
@@ -38,6 +44,7 @@ class TaskModel {
     void propagateAddCycle() {
     for (TaskModel task in tasks) {
       task.addCycle();
+      if (task.isCompleted) sendTaskToEnd(task);
     }
   }
 
@@ -47,7 +54,7 @@ class TaskModel {
     }
 
     if (cyclesFinished == cycles) {
-      
+      isCompleted = true;
     }
   }
 
@@ -60,6 +67,11 @@ class TaskModel {
     tasks[taskIdx] = editedTask;
   }
 
+  void sendTaskToEnd(TaskModel task) {
+    tasks.remove(task);
+    tasks.add(task);
+  }
+
   void removeTask(TaskModel task) {
     tasks.remove(task);
   }
@@ -70,20 +82,20 @@ class TaskModel {
       'description': task.description,
       'cyclesfinished': task.cyclesFinished,
       'cycles': task.cycles,
+      'iscompleted': task.isCompleted,
     };
 
     return taskMap;
   }
 
   TaskModel fromMap(Map<String, dynamic> taskMap) {
-    print('LOADING $taskMap');
     TaskModel task = TaskModel(
       title: taskMap['title'],
       description: taskMap['description'],
       cycles:  taskMap['cycles'],
       cyclesFinished: taskMap['cyclesfinished'],
+      isCompleted: taskMap['iscompleted'],
     );
-    print('LOADED $task');
 
     return task;
   }

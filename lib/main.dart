@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:audioplayers/audioplayers.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
@@ -102,12 +101,7 @@ class _MyHomeState extends State<MyHome> {
 
     super.initState();
 
-    _taskManager = TaskModel(
-      title: '',
-      description: '',
-      cycles: 0,
-      cyclesFinished: 0,
-    );
+    _taskManager = TaskModel.empty;
 
     _configsScreen = ConfigsOverlay(home: this);
     //_newTaskScreen = newTaskScreen(home: this);
@@ -140,9 +134,11 @@ class _MyHomeState extends State<MyHome> {
       mapTasks.add(_taskManager.toMap(task));
     }
 
-    print(mapTasks);
-
     prefs.setString('_tasks', jsonEncode(mapTasks));
+  }
+
+  Future<void> _clearConfigs() async {
+    await prefs.clear();
   }
 
   Future<void> _loadConfigs() async {
@@ -165,6 +161,7 @@ class _MyHomeState extends State<MyHome> {
 
     if (savedTasks != null) {
       List loadedTasks = jsonDecode(savedTasks);
+      print(loadedTasks);
       _taskManager.setTasks(loadedTasks);
     }
 
@@ -406,7 +403,7 @@ class _MyHomeState extends State<MyHome> {
             style: TextStyle(
               color: Colors.white,
               fontSize: 20,
-              fontWeight: FontWeight.bold
+              fontWeight: FontWeight.bold,
             ),
           ),
 
@@ -500,105 +497,181 @@ class _MyHomeState extends State<MyHome> {
             
                   TaskModel task = _taskManager.getTasks()[index - 1];
             
-                  return Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
+                  return Dismissible(
+                    key: ValueKey(task.id),
+                    direction: DismissDirection.horizontal,
 
-                      onTap: () {
-                        setState(() {
-                          toEditTask = TaskModel(
-                            title: task.title,
-                            description: task.description,
-                            cycles: task.cycles,
-                            cyclesFinished: task.cyclesFinished,
-                          );
-                          toEditTaskIdx = _taskManager.getTasks().indexOf(task);
-                          toEdit = true;
-                          _showEditTask = true;
-                          //continue
-                        });
-                      },
+                    onDismissed: (direction) {
+                      setState(() {
+                        _taskManager.removeTask(task);
+                        _saveConfigs();
+                      });
+                    },
 
-                      child: Container(
-                        height: 100,
-                        decoration: BoxDecoration(
-                          color: Color(0xff2C2C2C),
-                          borderRadius: BorderRadius.circular(20),
+                    background: Container(
+                      alignment: Alignment.centerLeft,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(20)
+                      ),
+
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 10),
+                        child: SvgPicture.asset(
+                          'assets/icons/trashbin.svg',
+                          width: 40,
+                          height: 40,
+                          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
                         ),
-                                  
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                          
-                            children: [
-                              
-                              Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          
-                                children: [
-                          
-                                  Expanded(
-                                    child: Text(
-                                      task.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+
+                    secondaryBackground: Container(
+                      alignment: Alignment.centerRight,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(20)
+                      ),
+
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: SvgPicture.asset(
+                          'assets/icons/trashbin.svg',
+                          width: 40,
+                          height: 40,
+                          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                        ),
+                      ),
+                    ),
+
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                    
+                        onTap: () {
+                          setState(() {
+                            toEditTask = TaskModel(
+                              title: task.title,
+                              description: task.description,
+                              cycles: task.cycles,
+                              cyclesFinished: task.cyclesFinished,
+                              isCompleted: task.isCompleted,
+                            );
+                            toEditTaskIdx = _taskManager.getTasks().indexOf(task);
+                            toEdit = true;
+                            _showEditTask = true;
+                            //continue
+                          });
+                        },
+                    
+                        child: Container(
+                          height: 100,
+                          decoration: BoxDecoration(
+                            color: Color(0xff2C2C2C),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                                    
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                            
+                              children: [
+                                
+                                Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            
+                                  children: [
+                    
+                                    Expanded(
+                                      child: Text(
+                                        task.title,
+                                        maxLines: 1,
+
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          decoration: task.isCompleted ? TextDecoration.lineThrough : TextDecoration.none,
+                                          decorationColor: Colors.white,
+                                          decorationThickness: 1.5,
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    Container(
+                                      height: 25,
+                                      width: 25,
+                                      color: Colors.transparent,
+                                      child: Transform.scale(
+                                        scale: 1.5,
+                                        child: Checkbox(
+                                          value: task.isCompleted,
+                                        
+                                          onChanged: (value) {
+                                            setState(() {
+                                              task.isCompleted = value ?? task.isCompleted;
+
+                                              if (task.isCompleted) {
+                                                _taskManager.sendTaskToEnd(task);
+                                              }
+                                            });
+                                        
+                                            _saveConfigs();
+                                          },
+                                        
+                                          activeColor: Colors.white,
+                                          checkColor: Colors.transparent,
+                                          side: BorderSide(
+                                            color: Colors.white.withValues(alpha: 0.6),
+                                            width: 1.5,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadiusGeometry.circular(20)
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    
+                                  children: [
+                                    
+                                    Expanded(
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          //color: Colors.amber,
+                                        ),
+                                        child: Text(
+                                          task.description,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Color(0xff636363),
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    
+                                    Text(
+                                      '${task.cyclesFinished}/${task.cycles}',
                                       style: TextStyle(
                                         color: Colors.white,
                                         fontSize: 20,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                  ),
-                                  
-                                  SizedBox(
-                                    width: 30,
-                                    height: 30,
-                                    child: SvgPicture.asset(
-                                        'assets/icons/edit.svg',
-                                        height: 30,
-                                        width: 30,
-                                        colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
-                                      ),
-                                  )
-                                ],
-                              ),
-                          
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  
-                                children: [
-                                  
-                                  Expanded(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        //color: Colors.amber,
-                                      ),
-                                      child: Text(
-                                        task.description,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: Color(0xff636363),
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  
-                                  Text(
-                                    '${task.cyclesFinished}/${task.cycles}',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -905,7 +978,8 @@ class _MyHomeState extends State<MyHome> {
               height: 50,
             
               decoration: BoxDecoration(
-                color: Color(0xff2C2C2C),
+                //color: Color(0xff2C2C2C),
+                color: Colors.transparent,
                 shape: BoxShape.circle,
               ),
             
@@ -968,6 +1042,7 @@ class _newTaskScreenState extends State<newTaskScreen> {
   bool _canSave = false;
   bool _showDesc = false;
 
+  @override
   void initState() {
     super.initState();
 
@@ -1115,6 +1190,7 @@ class _newTaskScreenState extends State<newTaskScreen> {
                                         description: _taskDesc,
                                         cycles: _taskCycles,
                                         cyclesFinished: widget.home.toEditTask.cyclesFinished,
+                                        isCompleted: widget.home.toEditTask.isCompleted,
                                       ));
                                     }
 
@@ -1124,6 +1200,7 @@ class _newTaskScreenState extends State<newTaskScreen> {
                                         description: _taskDesc,
                                         cycles: _taskCycles,
                                         cyclesFinished: 0,
+                                        isCompleted: false,
                                       ));
                                     }
 
